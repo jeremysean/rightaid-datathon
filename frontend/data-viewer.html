@@ -94,8 +94,8 @@
   </div>
   
   <div id="toast-container"></div>
-  <script src="js/data.js?v=2"></script>
-  <script src="js/app.js?v=2"></script>
+  <script src="js/data.js?v=3"></script>
+  <script src="js/app.js?v=4"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
       document.getElementById("sidebar-mount").innerHTML = App.buildSidebar("generator");
@@ -162,15 +162,20 @@
       App.SESSION.province = pid;
       App.saveSession();
 
-      var prov = EkoData.PROVINCES.find(function(p) { return p.id === pid; }) || EkoData.PROVINCES[0];
-      document.getElementById("prov-stats-container").innerHTML = [
-        '<div class="prov-stats">',
-        '<div class="prov-stat-item"><div class="lbl">Tingkat Kemiskinan</div><div class="val">'+prov.povertyRate+'%</div></div>',
-        '<div class="prov-stat-item"><div class="lbl">Rasio Gini</div><div class="val">'+prov.giniCoef+'</div></div>',
-        '<div class="prov-stat-item"><div class="lbl">Lantai Tanah</div><div class="val">'+prov.pctFloorDirt+'%</div></div>',
-        '<div class="prov-stat-item"><div class="lbl">Tanpa Listrik</div><div class="val">'+prov.pctNoElec+'%</div></div>',
-        '</div>'
-      ].join("");
+      // Province reference stats are synthetic demo data — guest accounts only.
+      if (App.isGuest()) {
+        var prov = EkoData.PROVINCES.find(function(p) { return p.id === pid; }) || EkoData.PROVINCES[0];
+        document.getElementById("prov-stats-container").innerHTML = [
+          '<div class="prov-stats">',
+          '<div class="prov-stat-item"><div class="lbl">Tingkat Kemiskinan</div><div class="val">'+prov.povertyRate+'%</div></div>',
+          '<div class="prov-stat-item"><div class="lbl">Rasio Gini</div><div class="val">'+prov.giniCoef+'</div></div>',
+          '<div class="prov-stat-item"><div class="lbl">Lantai Tanah</div><div class="val">'+prov.pctFloorDirt+'%</div></div>',
+          '<div class="prov-stat-item"><div class="lbl">Tanpa Listrik</div><div class="val">'+prov.pctNoElec+'%</div></div>',
+          '</div>'
+        ].join("");
+      } else {
+        document.getElementById("prov-stats-container").innerHTML = "";
+      }
 
       var sid = App.SESSION.lastSessionId;
       if (sid) {
@@ -190,6 +195,15 @@
     }
 
     function loadDummyData(pid) {
+      // Synthetic households are demo data — only for guest accounts.
+      if (!App.isGuest()) {
+        currentData = [];
+        document.getElementById("table-body").innerHTML =
+          '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-3);">' +
+          'Belum ada data. Jalankan analisis atau unggah data pada halaman <a href="analysis.html">Analisis</a>.' +
+          '</td></tr>';
+        return;
+      }
       var data = EkoData.generateHouseholds(pid, "normal", 15);
       currentData = data;
       renderTable(data);

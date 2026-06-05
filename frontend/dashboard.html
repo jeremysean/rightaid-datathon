@@ -165,8 +165,8 @@
     </div>
   </div>
   <div id="toast-container"></div>
-  <script src="js/data.js?v=2"></script>
-  <script src="js/app.js?v=2"></script>
+  <script src="js/data.js?v=3"></script>
+  <script src="js/app.js?v=4"></script>
   <script>
   document.addEventListener("DOMContentLoaded", async function() {
     document.getElementById("sidebar-mount").innerHTML = App.buildSidebar("dashboard");
@@ -179,99 +179,238 @@
       `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`,
     ];
 
-    // National stats â€” try API, fallback to EkoData
-    let NS = EkoData.NATIONAL_STATS;
-    try { NS = await App.fetchNationalStats(); } catch(e) {}
-    const statCards = [
-      { label: "Penduduk Miskin",     value: NS.poorPopulation, delta: "-0.46 Jt dari Mar 2024", dir: "down" },
-      { label: "Tingkat Kemiskinan",  value: NS.povertyRate,    delta: "-0.17 poin dari Mar 2024", dir: "down" },
-      { label: "Rasio Gini",          value: NS.giniCoef,       delta: "+0.002 dari Mar 2024", dir: "up" },
-      { label: "Anggaran Bansos 2024",value: NS.socialBudget,   delta: "+12.3% dari 2023", dir: "up" },
+    // Guest accounts see synthetic demo data; real accounts use live data only.
+    const guest = App.isGuest();
+    const NO_DATA = "Belum ada data tersedia.";
+    const emptyPanel = (id, msg) => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML =
+        '<div style="padding:32px 16px;text-align:center;color:var(--text-3);font-size:.85rem;">' + (msg || NO_DATA) + '</div>';
+    };
+    // The dashboard shows national reference figures as demo content for guests only.
+    // Real accounts get empty states — these stats are generic, not derived from their data.
+    const fetchOr = async (apiFn, fallback) => {
+      if (!guest) return null;
+      try { return await apiFn(); } catch (e) { return fallback; }
+    };
+
+    function setCardTitle(elId, title, subtitle) {
+      const host = document.getElementById(elId);
+      const card = host && host.closest(".card");
+      if (!card) return;
+      const t = card.querySelector(".card-title");
+      const s = card.querySelector(".card-subtitle");
+      if (t) t.textContent = title;
+      if (s && subtitle != null) s.textContent = subtitle;
+    }
+
+    // Render the dashboard from the user's own analyzed session (upload/generate).
+    function renderSessionDashboard(pred) {
+      const m  = pred.metrics || {};
+      const mp = pred.metrics_pmt || {};
+      const cm = pred.confusion_matrix || {};
+      const cands = pred.mistargeting_candidates || [];
+      const dd = pred.decile_dist || {};
+      const totalRT = (cm.tp||0) + (cm.fp||0) + (cm.fn||0) + (cm.tn||0);
+      const anomali = cands.filter(c => c.isAnomaly).length;
+      const prov = App.SESSION.province || "-";
+      const scen = App.SESSION.scenario || "normal";
+
+      const cards = [
+        { label: "Rumah Tangga Dianalisis", value: totalRT.toLocaleString("id-ID"), sub: "Provinsi: " + prov },
+        { label: "Potensi Exclusion Error", value: (m.exclusionErr ?? 0) + "%", sub: "PMT: " + (mp.exclusionErr ?? 0) + "%", color: "var(--danger)" },
+        { label: "Potensi Inclusion Error", value: (m.inclusionErr ?? 0) + "%", sub: "PMT: " + (mp.inclusionErr ?? 0) + "%", color: "var(--warning)" },
+        { label: "Kandidat Mis-Targeting", value: cands.length, sub: anomali + " terindikasi anomali" },
+      ];
+      document.getElementById("stat-grid").innerHTML = cards.map((s, i) => `
+        <div class="stat-card">
+          <div class="stat-label">${icons[i]} ${s.label}</div>
+          <div class="stat-value"${s.color ? ' style="color:' + s.color + '"' : ''}>${s.value}</div>
+          <div class="stat-delta" style="color:var(--text-3);font-weight:600;">${s.sub}</div>
+        </div>`).join("");
+
+      // Repurpose the trend card as the session's decile distribution.
+      setCardTitle("trend-chart", "Distribusi Desil — Sesi Anda", "Desil aktual (DTSEN) vs prediksi ML-PMT");
+      App.drawBarChart(document.getElementById("trend-chart"),
+        ["D1","D2","D3","D4","D5","D6","D7","D8","D9","D10"],
+        [{ data: dd.actual || dd.pmt || [] }, { data: dd.ml || [] }],
+        { colors: ["#9CA3AF", "#2563EB"] });
+
+      // Model comparison: PMT vs ML from this session. Precision/Recall are
+      // derived from the confusion matrix (the metrics payload omits them).
+      const fill = (cells, x, conf) => {
+        if (cells.length < 4) return;
+        cells[0].textContent = x.f1 ?? "—";
+        cells[1].textContent = x.auc ? x.auc : "—";   // PMT AUC is 0 (no probability score) → N/A
+        cells[2].textContent = x.exclusionErr != null ? x.exclusionErr + "%" : "—";
+        cells[3].textContent = x.inclusionErr != null ? x.inclusionErr + "%" : "—";
+        if (cells.length >= 6) {
+          const tp = (conf && conf.tp) || 0, fp = (conf && conf.fp) || 0, fn = (conf && conf.fn) || 0;
+          const prec = (tp + fp) ? tp / (tp + fp) : null;
+          const rec  = (tp + fn) ? tp / (tp + fn) : null;
+          cells[4].textContent = prec != null ? prec.toFixed(4) : "—";
+          cells[5].textContent = rec  != null ? rec.toFixed(4)  : "—";
+        }
+      };
+      fill(document.querySelectorAll(".model-col:first-child .model-metric .val"), mp, pred.confusion_matrix_pmt);
+      fill(document.querySelectorAll(".model-col:last-child  .model-metric .val"), m,  pred.confusion_matrix);
+
+      // Province ranking card → session summary.
+      setCardTitle("province-ranking", "Ringkasan Sesi", "Berdasarkan data yang Anda analisis");
+      document.getElementById("province-ranking").innerHTML =
+        '<div style="font-size:.85rem;color:var(--text-2);line-height:2.1;">' +
+        '<div>Provinsi: <strong style="color:var(--text)">' + prov + '</strong></div>' +
+        '<div>Skenario: <strong style="color:var(--text)">' + scen + '</strong></div>' +
+        '<div>Akurasi Model (F1): <strong style="color:var(--text)">' + (m.f1 ?? '-') + '</strong></div>' +
+        '<div>Daya Beda (AUC): <strong style="color:var(--text)">' + (m.auc ?? '-') + '</strong></div>' +
+        '</div>';
+
+      // Insights derived from the session.
+      const dEx = (mp.exclusionErr || 0) - (m.exclusionErr || 0);
+      const sIns = [
+        { c:"#F0FDF4", ic:"#16A34A", t:"ML-PMT vs PMT konvensional", x:"Exclusion error ML " + (m.exclusionErr ?? '-') + "% dibanding PMT " + (mp.exclusionErr ?? '-') + "% (" + (dEx>=0?'lebih rendah':'lebih tinggi') + " " + Math.abs(dEx).toFixed(1) + " poin)." },
+        { c:"#FFFBEB", ic:"#D97706", t:"Kandidat perlu verifikasi", x: cands.length + " rumah tangga terindikasi mis-targeting, " + anomali + " di antaranya anomali." },
+        { c:"#EFF6FF", ic:"#2563EB", t:"Cakupan analisis", x: totalRT.toLocaleString("id-ID") + " rumah tangga dianalisis pada provinsi " + prov + "." },
+      ];
+      const insIcons = [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/></svg>',
+      ];
+      document.getElementById("insights-panel").innerHTML = sIns.map((ins, i) => `
+        <div class="insight-item">
+          <div class="insight-icon" style="background:${ins.c};color:${ins.ic};">${insIcons[i]}</div>
+          <div class="insight-text"><h4>${ins.t}</h4><p>${ins.x}</p></div>
+        </div>`).join("");
+
+      emptyPanel("dtsen-progress", "Progress DTSEN hanya tersedia pada data nasional.");
+    }
+
+    // Session mode: a real account with an active analyzed session sees its own
+    // results instead of empty national figures.
+    const activeSid = App.SESSION.lastSessionId;
+    if (!guest && activeSid) {
+      try {
+        const pred = await App.apiPredict(activeSid);
+        renderSessionDashboard(pred);
+        return;
+      } catch (e) { /* session gone/expired — fall through to empty states */ }
+    }
+
+    // National stats
+    let NS = await fetchOr(App.fetchNationalStats, EkoData.NATIONAL_STATS);
+    const statMeta = [
+      { key: "poorPopulation", label: "Penduduk Miskin",      delta: "-0.46 Jt dari Mar 2024", dir: "down" },
+      { key: "povertyRate",    label: "Tingkat Kemiskinan",   delta: "-0.17 poin dari Mar 2024", dir: "down" },
+      { key: "giniCoef",       label: "Rasio Gini",           delta: "+0.002 dari Mar 2024", dir: "up" },
+      { key: "socialBudget",   label: "Anggaran Bansos 2024", delta: "+12.3% dari 2023", dir: "up" },
     ];
-    document.getElementById("stat-grid").innerHTML = statCards.map((s, i) => `
+    document.getElementById("stat-grid").innerHTML = statMeta.map((s, i) => `
       <div class="stat-card">
         <div class="stat-label">${icons[i]} ${s.label}</div>
-        <div class="stat-value">${s.value}</div>
-        <div class="stat-delta ${s.dir === 'down' ? 'down' : 'up'}">
+        <div class="stat-value">${NS ? NS[s.key] : "—"}</div>
+        ${NS ? `<div class="stat-delta ${s.dir === 'down' ? 'down' : 'up'}">
           <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="${s.dir === 'down' ? 'M12 5v14M5 12l7 7 7-7' : 'M12 19V5M5 12l7-7 7 7'}"/></svg>
           ${s.delta}
-        </div>
+        </div>` : `<div class="stat-delta" style="color:var(--text-3);">Belum ada data</div>`}
       </div>`).join("");
 
     // Trend chart
-    let trend = EkoData.MONTHLY_TREND;
-    try { trend = await App.fetchTrendStats(); } catch(e) {}
-    App.drawLineChart(document.getElementById("trend-chart"),
-      trend.map(d => d.month),
-      [{ data: trend.map(d => d.exclusion) }, { data: trend.map(d => d.inclusion) }],
-      { colors: ["#DC2626", "#2563EB"] });
+    let trend = await fetchOr(App.fetchTrendStats, EkoData.MONTHLY_TREND);
+    if (trend && trend.length) {
+      App.drawLineChart(document.getElementById("trend-chart"),
+        trend.map(d => d.month),
+        [{ data: trend.map(d => d.exclusion) }, { data: trend.map(d => d.inclusion) }],
+        { colors: ["#DC2626", "#2563EB"] });
+    } else {
+      const c = document.getElementById("trend-chart");
+      if (c) c.parentElement.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:center;height:260px;color:var(--text-3);font-size:.85rem;">' + NO_DATA + '</div>';
+    }
 
-    // Model comparison â€” patch static HTML values
-    let CMP = EkoData.ACCURACY_COMPARISON;
-    try { CMP = await App.fetchModelComparison(); } catch(e) {}
+    // Model comparison — patch static HTML values
+    let CMP = await fetchOr(App.fetchModelComparison, EkoData.ACCURACY_COMPARISON);
     const pmtVals = document.querySelectorAll(".model-col:first-child .model-metric .val");
     const mlVals  = document.querySelectorAll(".model-col:last-child  .model-metric .val");
-    if (pmtVals.length >= 4 && CMP.pmt) {
-      pmtVals[0].textContent = CMP.pmt.f1;
-      pmtVals[1].textContent = CMP.pmt.auc;
-      pmtVals[2].textContent = CMP.pmt.exclusionErr + "%";
-      pmtVals[3].textContent = CMP.pmt.inclusionErr + "%";
+    const fillModel = (cells, m) => {
+      if (cells.length < 4) return;
+      if (m) {
+        cells[0].textContent = m.f1;
+        cells[1].textContent = m.auc;
+        cells[2].textContent = m.exclusionErr + "%";
+        cells[3].textContent = m.inclusionErr + "%";
+      } else {
+        cells.forEach(c => { c.textContent = "—"; });
+      }
+    };
+    fillModel(pmtVals, CMP && CMP.pmt);
+    fillModel(mlVals,  CMP && CMP.ml);
+
+    // Province ranking — demo content, guest only
+    let provinces = null;
+    if (guest) {
+      try {
+        const ap = await App.fetchProvinces();
+        provinces = (ap && ap.length) ? ap.map(p => ({ name: p.name, povertyRate: p.povertyRate }))
+                                      : EkoData.PROVINCES.map(p => ({ name: p.name, povertyRate: p.povertyRate }));
+      } catch (e) {
+        provinces = EkoData.PROVINCES.map(p => ({ name: p.name, povertyRate: p.povertyRate }));
+      }
     }
-    if (mlVals.length >= 4 && CMP.ml) {
-      mlVals[0].textContent = CMP.ml.f1;
-      mlVals[1].textContent = CMP.ml.auc;
-      mlVals[2].textContent = CMP.ml.exclusionErr + "%";
-      mlVals[3].textContent = CMP.ml.inclusionErr + "%";
+    if (provinces) {
+      const ranked = [...provinces].sort((a, b) => b.povertyRate - a.povertyRate).slice(0, 6);
+      document.getElementById("province-ranking").innerHTML = ranked.map((p, i) => `
+        <div class="province-row">
+          <div class="province-rank">${i+1}</div>
+          <div class="province-name">${p.name}</div>
+          <div class="province-bar">
+            <div class="progress-bar"><div class="progress-fill ${p.povertyRate > 15 ? 'red' : p.povertyRate > 10 ? 'yellow' : ''}" style="width:${Math.min(100, p.povertyRate * 3)}%"></div></div>
+          </div>
+          <div class="province-val">${p.povertyRate}%</div>
+        </div>`).join("");
+    } else {
+      emptyPanel("province-ranking");
     }
 
-    // Province ranking
-    let provinces = EkoData.PROVINCES.map(p => ({ name: p.name, povertyRate: p.povertyRate }));
-    try {
-      const ap = await App.fetchProvinces();
-      if (ap && ap.length) provinces = ap.map(p => ({ name: p.name, povertyRate: p.povertyRate }));
-    } catch(e) {}
-    const ranked = [...provinces].sort((a, b) => b.povertyRate - a.povertyRate).slice(0, 6);
-    document.getElementById("province-ranking").innerHTML = ranked.map((p, i) => `
-      <div class="province-row">
-        <div class="province-rank">${i+1}</div>
-        <div class="province-name">${p.name}</div>
-        <div class="province-bar">
-          <div class="progress-bar"><div class="progress-fill ${p.povertyRate > 15 ? 'red' : p.povertyRate > 10 ? 'yellow' : ''}" style="width:${Math.min(100, p.povertyRate * 3)}%"></div></div>
-        </div>
-        <div class="province-val">${p.povertyRate}%</div>
-      </div>`).join("");
+    // Insights — synthetic narrative, demo (guest) only
+    if (guest) {
+      const insights = [
+        { color: "#FEE2E2", iconColor: "#DC2626", title: "Exclusion error Papua Pegunungan tertinggi", text: "32.97% tingkat kemiskinan dengan 64.3% rumah tangga tanpa akses listrik - anomali terbanyak terdeteksi model." },
+        { color: "#FFFBEB", iconColor: "#D97706", title: "Proyeksi PHK Massal meningkatkan mis-targeting 38%", text: "Proyeksi dampak PHK manufaktur di Jawa Barat menunjukkan PMT konvensional hanya mendeteksi 51% dari kelompok yang seharusnya menerima bansos." },
+        { color: "#F0FDF4", iconColor: "#16A34A", title: "ML-PMT kurangi exclusion error hingga 48%", text: "Dari 28.4% menjadi 14.7% dalam kondisi baseline - konsisten dengan temuan riset University of Groningen 2025." },
+      ];
+      const insIcons = [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>`,
+      ];
+      document.getElementById("insights-panel").innerHTML = insights.map((ins, i) => `
+        <div class="insight-item">
+          <div class="insight-icon" style="background:${ins.color};color:${ins.iconColor};">${insIcons[i]}</div>
+          <div class="insight-text"><h4>${ins.title}</h4><p>${ins.text}</p></div>
+        </div>`).join("");
+    } else {
+      emptyPanel("insights-panel");
+    }
 
-    // Insights (static)
-    const insights = [
-      { color: "#FEE2E2", iconColor: "#DC2626", title: "Exclusion error Papua Pegunungan tertinggi", text: "32.97% tingkat kemiskinan dengan 64.3% rumah tangga tanpa akses listrik - anomali terbanyak terdeteksi model." },
-      { color: "#FFFBEB", iconColor: "#D97706", title: "Proyeksi PHK Massal meningkatkan mis-targeting 38%", text: "Proyeksi dampak PHK manufaktur di Jawa Barat menunjukkan PMT konvensional hanya mendeteksi 51% dari kelompok yang seharusnya menerima bansos." },
-      { color: "#F0FDF4", iconColor: "#16A34A", title: "ML-PMT kurangi exclusion error hingga 48%", text: "Dari 28.4% menjadi 14.7% dalam kondisi baseline - konsisten dengan temuan riset University of Groningen 2025." },
-    ];
-    const insIcons = [
-      `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`,
-      `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`,
-      `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>`,
-    ];
-    document.getElementById("insights-panel").innerHTML = insights.map((ins, i) => `
-      <div class="insight-item">
-        <div class="insight-icon" style="background:${ins.color};color:${ins.iconColor};">${insIcons[i]}</div>
-        <div class="insight-text"><h4>${ins.title}</h4><p>${ins.text}</p></div>
-      </div>`).join("");
-
-    // DTSEN progress (static)
-    const dtsen = [
-      { prov: "DKI Jakarta", pct: 98 }, { prov: "Jawa Barat", pct: 91 },
-      { prov: "Jawa Tengah", pct: 88 }, { prov: "Jawa Timur", pct: 85 },
-      { prov: "Bali", pct: 83 },        { prov: "Sumatera Utara", pct: 79 },
-      { prov: "Kalimantan Timur", pct: 74 }, { prov: "Sulawesi Selatan", pct: 72 },
-      { prov: "Aceh", pct: 63 },        { prov: "Nusa Tenggara Timur", pct: 58 },
-      { prov: "Maluku", pct: 44 },      { prov: "Papua Pegunungan", pct: 34 },
-    ];
-    document.getElementById("dtsen-progress").innerHTML = dtsen.map(d => `
-      <div style="margin-bottom:12px;">
-        <div class="progress-label"><span>${d.prov}</span><span>${d.pct}%</span></div>
-        <div class="progress-bar"><div class="progress-fill ${d.pct < 50 ? 'red' : d.pct < 80 ? 'yellow' : 'green'}" style="width:${d.pct}%"></div></div>
-      </div>`).join("");
+    // DTSEN progress — synthetic, demo (guest) only
+    if (guest) {
+      const dtsen = [
+        { prov: "DKI Jakarta", pct: 98 }, { prov: "Jawa Barat", pct: 91 },
+        { prov: "Jawa Tengah", pct: 88 }, { prov: "Jawa Timur", pct: 85 },
+        { prov: "Bali", pct: 83 },        { prov: "Sumatera Utara", pct: 79 },
+        { prov: "Kalimantan Timur", pct: 74 }, { prov: "Sulawesi Selatan", pct: 72 },
+        { prov: "Aceh", pct: 63 },        { prov: "Nusa Tenggara Timur", pct: 58 },
+        { prov: "Maluku", pct: 44 },      { prov: "Papua Pegunungan", pct: 34 },
+      ];
+      document.getElementById("dtsen-progress").innerHTML = dtsen.map(d => `
+        <div style="margin-bottom:12px;">
+          <div class="progress-label"><span>${d.prov}</span><span>${d.pct}%</span></div>
+          <div class="progress-bar"><div class="progress-fill ${d.pct < 50 ? 'red' : d.pct < 80 ? 'yellow' : 'green'}" style="width:${d.pct}%"></div></div>
+        </div>`).join("");
+    } else {
+      emptyPanel("dtsen-progress");
+    }
   });
 </script>
 
