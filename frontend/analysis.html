@@ -45,7 +45,7 @@
         <div class="card mb-6">
           <div class="card-header">
             <div>
-              <div class="card-title">Konfigurasi Analisis</div>
+              <div class="card-title" style="display:flex;align-items:center;gap:10px;">Konfigurasi Analisis <span id="access-badge" class="badge badge-gray" title="Tipe akun"></span></div>
               <div class="card-subtitle">Pilih skenario dan sumber data, lalu jalankan model ML-PMT</div>
             </div>
             <a href="data-viewer.html" class="btn btn-secondary btn-sm">
@@ -72,8 +72,8 @@
             <div class="config-row">
               <div class="step-label"><span class="step-num">2</span> Sumber Data</div>
               <div class="tabs source-toggle" id="source-tabs">
-                <button class="tab-btn active" onclick="setSource('synthetic',this)">Data Sintetis</button>
-                <button class="tab-btn" onclick="setSource('upload',this)">Upload Data Nyata</button>
+                <button class="tab-btn active" id="src-synthetic" onclick="setSource('synthetic',this)">Data Sintetis</button>
+                <button class="tab-btn" id="src-upload" onclick="setSource('upload',this)">Upload Data Nyata</button>
               </div>
             </div>
 
@@ -230,6 +230,7 @@
         App.showToast("Menggunakan sesi sebelumnya. Klik Analisis Ulang untuk memproses kembali.", "default");
       }
 
+      applyAccess();
       renderAll();
       renderStatus();
       App.loadSession();
@@ -268,7 +269,9 @@
         rerun.style.display = "";
       } else {
         el.className = "badge badge-gray";
-        el.textContent = "Belum ada analisis — menampilkan data contoh";
+        el.textContent = (!window.isGuest)
+          ? "Belum ada data — unggah file untuk memulai"
+          : "Belum ada analisis — menampilkan data contoh";
         rerun.style.display = "none";
       }
     }
@@ -282,11 +285,47 @@
         renderMetricsFromAPI(currentPredictions);
         renderDecileChartFromAPI(currentPredictions);
         renderCandidatesFromAPI(currentPredictions);
+      } else if (!window.isGuest) {
+        // Real accounts are upload-only — never show synthetic/sample data before a real upload.
+        renderEmptyState();
       } else {
         renderMetricsDummy(sc);
         renderDecileChartDummy(sc);
         renderCandidatesDummy(sc);
       }
+    }
+
+    // Guest accounts demo with synthetic data; real accounts must upload their own data.
+    function applyAccess() {
+      var u = (App.SESSION && App.SESSION.user) || {};
+      var email = (u.email || "").toLowerCase();
+      var role  = (u.role  || "").toLowerCase();
+      window.isGuest = role === "guest" || email.indexOf("guest") === 0;
+
+      var badge = document.getElementById("access-badge");
+      if (window.isGuest) {
+        badge.textContent = "Tamu · Data Sintetis";
+        badge.className = "badge badge-yellow";
+        setSource("synthetic", document.getElementById("src-synthetic"));
+      } else {
+        badge.textContent = "Wajib Upload Data";
+        badge.className = "badge badge-blue";
+        document.getElementById("src-synthetic").style.display = "none";
+        setSource("upload", document.getElementById("src-upload"));
+      }
+    }
+
+    // Placeholder shown to non-guest accounts until they upload real data.
+    function renderEmptyState() {
+      renderMetricsRaw("—", "—", "—", "—");
+      App.drawBarChart(document.getElementById("decile-chart"),
+        ["D1","D2","D3","D4","D5","D6","D7","D8","D9","D10"],
+        [{ data: Array(10).fill(0) }, { data: Array(10).fill(0) }],
+        { colors: ["#9CA3AF", "#2563EB"] });
+      document.getElementById("candidate-list").innerHTML =
+        '<div style="padding:48px 24px;text-align:center;color:var(--text-3);">' +
+        '<p style="font-weight:600;color:var(--text-2);margin-bottom:6px;">Belum ada data</p>' +
+        '<p style="font-size:.85rem;">Unggah data rumah tangga (CSV/JSON) di atas untuk menjalankan analisis.</p></div>';
     }
 
     // â”€â”€ Dummy renderers (fallback) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
