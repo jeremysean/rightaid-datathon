@@ -225,15 +225,18 @@
 
       // Restore session_id if stored
       var stored = App.SESSION.lastSessionId;
-      if (stored) {
-        currentSessionId = stored;
-        App.showToast("Menggunakan sesi sebelumnya. Klik Analisis Ulang untuk memproses kembali.", "default");
-      }
+      if (stored) currentSessionId = stored;
 
       applyAccess();
       renderAll();
       renderStatus();
       App.loadSession();
+
+      // Auto-restore the previous session's results so data survives navigation.
+      if (stored) {
+        App.showToast("Memuat sesi sebelumnya...", "default");
+        runPredict();
+      }
     });
 
     // â”€â”€ Scenario tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
