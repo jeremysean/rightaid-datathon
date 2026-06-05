@@ -236,17 +236,24 @@
         [{ data: dd.actual || dd.pmt || [] }, { data: dd.ml || [] }],
         { colors: ["#9CA3AF", "#2563EB"] });
 
-      // Model comparison: PMT vs ML from this session.
-      const fill = (cells, x) => {
+      // Model comparison: PMT vs ML from this session. Precision/Recall are
+      // derived from the confusion matrix (the metrics payload omits them).
+      const fill = (cells, x, conf) => {
         if (cells.length < 4) return;
         cells[0].textContent = x.f1 ?? "—";
-        cells[1].textContent = x.auc ?? "—";
+        cells[1].textContent = x.auc ? x.auc : "—";   // PMT AUC is 0 (no probability score) → N/A
         cells[2].textContent = x.exclusionErr != null ? x.exclusionErr + "%" : "—";
         cells[3].textContent = x.inclusionErr != null ? x.inclusionErr + "%" : "—";
-        for (let i = 4; i < cells.length; i++) cells[i].textContent = "—";
+        if (cells.length >= 6) {
+          const tp = (conf && conf.tp) || 0, fp = (conf && conf.fp) || 0, fn = (conf && conf.fn) || 0;
+          const prec = (tp + fp) ? tp / (tp + fp) : null;
+          const rec  = (tp + fn) ? tp / (tp + fn) : null;
+          cells[4].textContent = prec != null ? prec.toFixed(4) : "—";
+          cells[5].textContent = rec  != null ? rec.toFixed(4)  : "—";
+        }
       };
-      fill(document.querySelectorAll(".model-col:first-child .model-metric .val"), mp);
-      fill(document.querySelectorAll(".model-col:last-child  .model-metric .val"), m);
+      fill(document.querySelectorAll(".model-col:first-child .model-metric .val"), mp, pred.confusion_matrix_pmt);
+      fill(document.querySelectorAll(".model-col:last-child  .model-metric .val"), m,  pred.confusion_matrix);
 
       // Province ranking card → session summary.
       setCardTitle("province-ranking", "Ringkasan Sesi", "Berdasarkan data yang Anda analisis");
