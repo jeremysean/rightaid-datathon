@@ -386,9 +386,10 @@
       candidates.sort(function(a, b) { return Math.abs(b.pmtDecile - b.mlDecile) - Math.abs(a.pmtDecile - a.mlDecile); });
       renderCandidateList(candidates.slice(0, 15).map(function(c) {
         return {
-          id: c.id, pmtDecile: c.pmtDecile, mlDecile: c.mlDecile,
+          id: c.id, pmtDecile: c.pmtDecile,
+          mlEligible: c.mlDecile < 5 ? 1 : 0,
           confidence: c.confidence,
-          isExclusion: c.mlDecile <= 3 && c.pmtDecile > 3,
+          isExclusion: c.mlDecile < 5 && c.pmtDecile > 4,
           isAnomaly: c.isAnomaly
         };
       }), null);
@@ -398,13 +399,17 @@
       var recs = pred.mistargeting_candidates || pred.mismatches || [];
       renderCandidateList(recs.map(function(r) {
         var pmtD = r.pmtDecile || r.pmt_decile || 5;
-        var mlD  = r.actualDecile || r.ml_decile || 5;
+        // The model only outputs a binary eligibility (mlEligible); there is no ML decile.
+        // Fall back to the actual welfare decile only for older/mock payloads.
+        var mlElig = (r.mlEligible !== undefined && r.mlEligible !== null)
+          ? (r.mlEligible === 1 || r.mlEligible === true)
+          : ((r.actualDecile || r.ml_decile || 5) < 5);
         return {
           id: r.id,
           pmtDecile: pmtD,
-          mlDecile: mlD,
+          mlEligible: mlElig ? 1 : 0,
           confidence: r.confidence || r.prob_eligible || 0.5,
-          isExclusion: (mlD <= 4 && pmtD > 4),
+          isExclusion: (mlElig && pmtD > 4),
           isAnomaly: r.isAnomaly || r.is_anomaly || false
         };
       }), pred.session_id);
@@ -419,6 +424,10 @@
       document.getElementById("candidate-list").innerHTML = items.map(function(c) {
         var statusCls = c.isExclusion ? "status-err" : "status-warn";
         var statusTxt = c.isExclusion ? "Potensi Exclusion" : "Potensi Inclusion";
+        var mlElig = (c.mlEligible === 1 || c.mlEligible === true);
+        var mlTxt = mlElig
+          ? '<strong style="color:var(--success);">Layak (D&lt;5)</strong>'
+          : '<strong style="color:var(--danger);">Tidak Layak (D&ge;5)</strong>';
         return [
           '<div class="shap-record-item" onclick="selectCandidate(\'' + c.id + '\', ' + c.isExclusion + ', \'' + (sessionId||'') + '\')">',
           '<div class="rec-header">',
@@ -426,7 +435,7 @@
           '<div class="rec-status ' + statusCls + '">' + statusTxt + '</div>',
           '</div>',
           '<div class="rec-details">',
-          'Tercatat Desil ' + (c.pmtDecile||'-') + ' &rarr; Prediksi ML Desil ' + (c.mlDecile||'-') + '<br>',
+          'Tercatat Desil ' + (c.pmtDecile||'-') + ' &rarr; Prediksi ML: ' + mlTxt + '<br>',
           'Skor Keyakinan Model: ' + ((c.confidence || 0.5) * 100).toFixed(0) + '%',
           '</div></div>'
         ].join("");
@@ -540,10 +549,10 @@
               : '<br><strong style="color:var(--warning);">Rekomendasi:</strong> Evaluasi ulang kelayakan.') +
             '</div>';
           var sorted = (shapData.features || []).sort(function(a, b) {
-            return Math.abs(b.shap_value) - Math.abs(a.shap_value);
+            return Math.abs(b.value) - Math.abs(a.value);
           });
           App.renderSHAP(document.getElementById("shap-bars"),
-            sorted.map(function(f) { return { feature: f.feature, value: f.shap_value }; }));
+            sorted.map(function(f) { return { feature: f.feature, value: f.value }; }));
           return;
         } catch(e) {}
       }

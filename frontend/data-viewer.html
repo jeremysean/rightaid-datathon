@@ -16,6 +16,7 @@
     .table-container { max-height:500px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius); }
     .table-container thead th { position:sticky; top:0; background:var(--surface); z-index:10; box-shadow:0 1px 0 var(--border); }
     .decile-badge { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:4px; font-size:.75rem; font-weight:700; }
+    .decile-binary { width:auto; padding:0 8px; }
     .decile-high { background:var(--danger-light); color:var(--danger); }
     .decile-mid { background:var(--warning-light); color:var(--warning); }
     .decile-low { background:var(--success-light); color:var(--success); }
@@ -119,6 +120,26 @@
       return "decile-high";
     }
 
+    // The model only returns a binary eligibility (mlEligible) / probability (mlScore),
+    // not a 1-10 decile. So the "Desil ML" column shows two classes instead of a single
+    // number that would otherwise fall back to a meaningless D5:
+    //   eligible (poor)  -> D<5,  not eligible -> Dâ‰¥5.
+    // Mock/guest rows carry a simulated mlDecile, so we derive the class from that.
+    function getMlClass(r) {
+      var eligible;
+      var elig = (r.mlEligible !== undefined ? r.mlEligible : r.ml_eligible);
+      if (elig !== undefined && elig !== null) {
+        eligible = (elig === 1 || elig === true || elig === "1");
+      } else {
+        var d = (r.mlDecile !== undefined ? r.mlDecile : r.ml_decile);
+        if (d === undefined || d === null) return null;
+        eligible = d < 5;
+      }
+      return eligible
+        ? { label: "D<5",  cls: "decile-low",  eligible: true }
+        : { label: "D≥5", cls: "decile-high", eligible: false };
+    }
+
     var currentData = [];
 
     function exportCSV() {
@@ -144,7 +165,7 @@
       if (!currentData.length) { App.showToast("Tidak ada data untuk diekspor.", "error"); return; }
       var headers = ["ID Record","Kecamatan","Jenis Kelamin KRT","Usia KRT","Jumlah Jiwa","Pendidikan","Sektor","Pengeluaran/Bln","Jenis Lantai","Sumber Air","Kendaraan Roda 4","Kendaraan Roda 2","Desil PMT","Desil ML","Skor PMT","Skor ML"];
       var rows = currentData.map(function(r) {
-        return [r.id,r.kecamatan,r.headGender,r.headAge,r.hhSize,r.edu,r.sector,r.expenditure,r.floor,r.water,r.ownCar?"Ya":"Tidak",r.ownMotor?"Ya":"Tidak",r.pmtDecile,r.mlDecile,r.pmtScore,r.mlScore]
+        return [r.id,r.kecamatan,r.headGender,r.headAge,r.hhSize,r.edu,r.sector,r.expenditure,r.floor,r.water,r.ownCar?"Ya":"Tidak",r.ownMotor?"Ya":"Tidak",r.pmtDecile,(getMlClass(r)||{}).label||"-",r.pmtScore,r.mlScore]
           .map(function(v) { var s=String(v); return s.indexOf(",")>=0||s.indexOf('"')>=0?'"'+s.replace(/"/g,'""')+'"':s; }).join(",");
       });
       var blob = new Blob(["\uFEFF"+[headers.join(",")].concat(rows).join("\n")], {type:"text/csv;charset=utf-8;"});
@@ -212,10 +233,9 @@
     function renderTable(data) {
       var tbody = document.getElementById("table-body");
       tbody.innerHTML = data.map(function(r) {
-        var diff = Math.abs((r.pmtDecile||r.pmt_decile||5) - (r.mlDecile||r.ml_decile||5));
-        var diffBadge = diff >= 2 ? '<span class="diff-warn" title="Beda â‰¥ 2 desil">âš  Beda Jauh</span>' : '';
         var pmtD = r.pmtDecile || r.pmt_decile || 5;
-        var mlD  = r.mlDecile  || r.ml_decile  || 5;
+        var ml   = getMlClass(r);
+        var diffBadge = (ml && (pmtD < 5) !== ml.eligible) ? '<span class="diff-warn" title="PMT dan ML beda kelas kelayakan">\u26A0 Beda Kelas</span>' : '';
         var loc  = r.kecamatan || r.province || "-";
         var gender  = r.headGender || r.gender_label || "-";
         var age     = r.headAge    || r.usia_kepala_keluarga || "-";
@@ -232,7 +252,7 @@
           '<td><div style="font-weight:600;font-size:.82rem;">'+App.fmtRp(spend)+' / bln</div><div style="font-size:.75rem;color:var(--text-3);">'+sector+' | Mtr: '+(motor?'Ya':'Tdk')+'</div></td>',
           '<td><div style="font-size:.8rem;">Lantai: '+floor+'</div><div style="font-size:.75rem;color:var(--text-3);">Air: '+water+'</div></td>',
           '<td><div class="decile-badge '+getDecileClass(pmtD)+'">D'+pmtD+'</div></td>',
-          '<td><div class="decile-badge '+getDecileClass(mlD)+'">D'+mlD+'</div>'+diffBadge+'</td>',
+          '<td>'+(ml ? '<div class="decile-badge decile-binary '+ml.cls+'">'+ml.label+'</div>' : '<span style="color:var(--text-3);">—</span>')+diffBadge+'</td>',
           '</tr>'
         ].join("");
       }).join("");
